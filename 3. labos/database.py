@@ -66,7 +66,7 @@ class BatchIterator(object):
 if __name__ == '__main__':
     file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'selected_conversations.txt')
 
-    db = Database(2, 2)
+    db = Database(100, 30)
 
     db.preprocess(file_path)
     print '-' * 70
