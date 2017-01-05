@@ -1,4 +1,5 @@
 import os
+import operator
 
 import numpy as np
 
@@ -12,6 +13,7 @@ class RNN(object):
         self.sequence_length = sequence_length
         self.vocab_size = vocab_size
         self.learning_rate = learning_rate
+        self.theta = 1e-7
 
         self.U = np.random.normal(scale=1e-2, size=(hidden_size, vocab_size)) # ... input projection
         self.W = np.random.normal(scale=1e-2, size=(hidden_size, hidden_size)) # ... hidden-to-hidden projection
@@ -51,8 +53,9 @@ class RNN(object):
         # U - input projection matrix (input dimension x hidden size)
         # W - hidden to hidden projection matrix (hidden size x hidden size)
         # b - bias of shape (hidden size x 1)
+
         cache = []
-        h = np.zeros(h0.shape[0], x.shape[1]+1, h0.shape[1])
+        h = np.zeros((h0.shape[0], x.shape[1]+1, h0.shape[1]))
         h[:,0,:] = h0
         
         for t in range(x.shape[1]):
@@ -113,9 +116,9 @@ class RNN(object):
 
     @staticmethod
     def output(h, V, c):
-        o = np.zeros((self.batch_size, self.sequence_length, self.hidden_size))
+        o = np.zeros((h.shape[0], h.shape[1] - 1, V.shape[0]))
 
-        for t in range(self.sequence_length):
+        for t in range(h.shape[1]-1):
             o_t = np.dot(h[:,t+1,:], V.T) + c.T
 
             o[:,t,:] = o_t
@@ -159,7 +162,7 @@ class RNN(object):
         do = yhat - y
 
         for t in range(self.sequence_length):
-            dV += np.clip(np.dot(do[:,t,:], h[:,t+1,:]), -5, 5)
+            dV += np.clip(np.dot(do[:,t,:].T, h[:,t+1,:]), -5, 5)
             dc += np.clip(np.sum(do[:,t,:], axis=0, keepdims=True), -5, 5)
 
         # calculate the output (o) - unnormalized log probabilities of classes
@@ -171,10 +174,50 @@ class RNN(object):
 
         return loss, dh, dV, dc
     
-    def update(self, dU, dW, db, dV, dc, U, W, b, V, c, memory_U, memory_W, memory_b, memory_V, memory_c):
-        
-                
+    def update(self, dU, dW, db, dV, dc):
+        # print self.U.shape, dU.shape, self.memory_U.shape
+        # print self.W.shape, dW.shape, self.memory_W.shape
+        # print self.b.shape, db.shape, self.memory_b.shape
+        # print self.V.shape, dV.shape, self.memory_V.shape
+        # print self.c.shape, dc.shape, self.memory_c.shape
 
+        for w, g, r in zip((self.U, self.W, self.b, self.V, self.c),
+                           (dU, dW, db.T, dV, dc.T),
+                           (self.memory_U, self.memory_W, self.memory_b, self.memory_V, self.memory_c)):
+            
+            r += g * g
+            w += -(self.learning_rate / (self.theta + np.sqrt(r)) * g)
+
+    def step(self, h0, x, y):
+        h, cache = RNN.rnn_forward(x, h0, self.U, self.W, self.b)
+        loss, dh, dV, dc = self.output_loss_and_grads(h, self.V, self.c, y)
+        print 'Loss: {}'.format(np.mean(loss))
+        dU, dW, db = self.rnn_backward(dh, cache)
+        self.update(dU, dW, db, dV, dc)
+
+        return loss, h[:,-1,:]
+
+    
+def run_language_model(dataset, max_epochs, hidden_size=100, sequence_length=30, learning_rate=1e-1, sample_every=100):
+    
+    vocab_size = dataset.vocab_size
+    rnn = RNN(hidden_size, sequence_length, vocab_size, learning_rate)
+
+    current_epoch = 0 
+    batch = 0
+
+    h0 = np.zeros((hidden_size, hidden_size))
+
+    average_loss = 0
+
+    while current_epoch < max_epochs: 
+        print 'current_epoch: {}'.format(current_epoch)
+
+        for x, y in dataset.batches():
+            rnn.gradient_check(x, y)
+            loss, h0 = rnn.step(h0, x, y)
+
+        current_epoch += 1
 
 if __name__ == '__main__':
     file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'selected_conversations.txt')
@@ -182,4 +225,4 @@ if __name__ == '__main__':
     db = Database(100, 30)
     db.preprocess(file_path)
 
-    rnn = RNN(100, 30, db.vocab_size, 1e-2)
+    run_language_model(db, 30)
