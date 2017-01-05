@@ -21,7 +21,10 @@ class Database(object):
         self.id2char = {k:v for v,k in self.char2id.items()}
 
         self.x = self.encode(data)
-        print self.x
+    
+    @property
+    def vocab_size(self):
+        return self.voc_size
 
     def encode(self, sequence):
         x = np.array(list(map(self.char2id.get, sequence)))
