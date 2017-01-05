@@ -5,6 +5,7 @@ import numpy as np
 
 from database import Database
 
+batch_size = 5
 
 class RNN(object):
 
@@ -15,45 +16,25 @@ class RNN(object):
         self.learning_rate = learning_rate
         self.theta = 1e-7
 
-        self.U = np.random.normal(scale=1e-2, size=(hidden_size, vocab_size)) # ... input projection
-        self.W = np.random.normal(scale=1e-2, size=(hidden_size, hidden_size)) # ... hidden-to-hidden projection
-        self.b = np.zeros((hidden_size, 1)) # ... input bieas        
+        self.U = np.random.normal(scale=1e-2, size=(hidden_size, vocab_size)) 
+        self.W = np.random.normal(scale=1e-2, size=(hidden_size, hidden_size)) 
+        self.b = np.zeros((hidden_size, 1))  
         
-        self.V = np.random.normal(scale=1e-2, size=(vocab_size, hidden_size)) # ... output projection
-        self.c = np.zeros((vocab_size, 1)) # ... output bias
+        self.V = np.random.normal(scale=1e-2, size=(vocab_size, hidden_size))
+        self.c = np.zeros((vocab_size, 1))
 
-        # memory of past gradients - rolling sum of squares for Adagrad
         self.memory_U, self.memory_W, self.memory_V = np.zeros_like(self.U), np.zeros_like(self.W), np.zeros_like(self.V)
         self.memory_b, self.memory_c = np.zeros_like(self.b), np.zeros_like(self.c)
 
     @staticmethod
     def rnn_step_forward(x, h_prev, U, W, b):
-        # A single time step forward of a recurrent neural network with a 
-        # hyperbolic tangent nonlinearity.
-
-        # x - input data (minibatch size x input dimension)
-        # h_prev - previous hidden state (minibatch size x hidden size)
-        # U - input projection matrix (input dimension x hidden size)
-        # W - hidden to hidden projection matrix (hidden size x hidden size)
-        # b - bias of shape (hidden size x 1)
-
         h = np.dot(W, h_prev.T) + np.dot(U, x.T) + b
         h_current = np.tanh(h)
-        # return the new hidden state and a tuple of values needed for the backward step
 
-        return h_current, (h_current, h_prev, x)
+        return h_current.T, (h_current.T, h_prev.T, x)
     
     @staticmethod
     def rnn_forward(x, h0, U, W, b):
-        # Full unroll forward of the recurrent neural network with a 
-        # hyperbolic tangent nonlinearity
-
-        # x - input data for the whole time-series (minibatch size x sequence_length x input dimension)
-        # h0 - initial hidden state (minibatch size x hidden size)
-        # U - input projection matrix (input dimension x hidden size)
-        # W - hidden to hidden projection matrix (hidden size x hidden size)
-        # b - bias of shape (hidden size x 1)
-
         cache = []
         h = np.zeros((h0.shape[0], x.shape[1]+1, h0.shape[1]))
         h[:,0,:] = h0
@@ -63,54 +44,37 @@ class RNN(object):
             h[:,t+1,:] = h_t
             cache.append(cache_t)
 
-        # return the hidden states for the whole time series (T+1) and a tuple of values needed for the backward step
-
         return h, cache
 
 
     def rnn_step_backward(self, grad_next, cache):
-        # A single time step backward of a recurrent neural network with a 
-        # hyperbolic tangent nonlinearity.
-
-        # grad_next - upstream gradient of the loss with respect to the next hidden state and current output
-        # cache - cached information from the forward pass
         h = cache[0]
         h_prev = cache[1]
         x = cache[2]
-
         dtanh = 1 - h**2
 
-        dh_prev = np.dot(grad_next, np.dot(dtanh, self.W))
-        dU = np.dot(grad_next, np.dot(dtanh, x))
-        dW = np.dot(grad_next, np.dot(dtanh, h_prev))
-        db = np.sum(np.dot(grad_next, dtanh), axis=0, keepdims=True)
-        
-        # compute and return gradients with respect to each parameter
-        # HINT: you can use the chain rule to compute the derivative of the
-        # hyperbolic tangent function and use it to compute the gradient
-        # with respect to the remaining parameters
+        dh_prev = np.dot(grad_next * dtanh, self.W)
+        dU = np.dot((grad_next * dtanh).T, x)
+        dW = np.dot((grad_next * dtanh).T, h_prev.T)
+        db = np.sum(grad_next * dtanh, axis=0, keepdims=True)
 
         return dh_prev, dU, dW, db
 
     def rnn_backward(self, dh, cache):
-        # Full unroll forward of the recurrent neural network with a 
-        # hyperbolic tangent nonlinearity
-
-        dU = np.zeros((self.hidden_size, self.vocab_size))
-        dW = np.zeros((self.hidden_size, self.hidden_size))
-        db = np.zeros((self.hidden_size, 1))
+        dU = 0
+        dW = 0
+        db = 0
         dh_prev = 0
+        #print dh.shape
 
         for t in range(self.sequence_length-1, 0, -1):
             dh_t = dh[:,t,:] + dh_prev
             dh_prev, du, dw, db = self.rnn_step_backward(dh_t, cache[t])
-
+            
             dU += np.clip(du, -5, 5)
             dW += np.clip(dw, -5, 5)
             db += np.clip(db, -5, 5)
-        # compute and return gradients with respect to each parameter
-        # for the whole time series.
-        # Why are we not computing the gradient with respect to inputs (x)?
+
 
         return dU, dW, db
 
@@ -118,10 +82,10 @@ class RNN(object):
     def output(h, V, c):
         o = np.zeros((h.shape[0], h.shape[1] - 1, V.shape[0]))
 
-        for t in range(h.shape[1]-1):
-            o_t = np.dot(h[:,t+1,:], V.T) + c.T
+        for t in range(1, h.shape[1]):
+            o_t = np.dot(h[:,t,:], V.T) + c.T
 
-            o[:,t,:] = o_t
+            o[:,t-1,:] = o_t
 
         return o
 
@@ -135,22 +99,6 @@ class RNN(object):
         return np.log(np.sum(np.exp(o), axis=1)) - np.sum(y * o, axis=1)
 
     def output_loss_and_grads(self, h, V, c, y):
-        # Calculate the loss of the network for each of the outputs
-        
-        # h - hidden states of the network for each timestep. 
-        #     the dimensionality of h is (batch size x sequence length x hidden size (the initial state is irrelevant for the output)
-        # V - the output projection matrix of dimension hidden size x vocabulary size
-        # c - the output bias of dimension vocabulary size x 1
-        # y - the true class distribution - a tensor of dimension 
-        #     batch_size x sequence_length x vocabulary size - you need to do this conversion prior to
-        #     passing the argument. A fast way to create a one-hot vector from
-        #     an id could be something like the following code:
-
-        #   y[batch_id][timestep] = np.zeros((vocabulary_size, 1))
-        #   y[batch_id][timestep][batch_y[timestep]] = 1
-
-        #     where y might be a list or a dictionary.
-
         o = RNN.output(h, V, c)
         yhat = RNN.softmax(o)
         loss = RNN.loss(y, o)
@@ -163,14 +111,7 @@ class RNN(object):
 
         for t in range(self.sequence_length):
             dV += np.clip(np.dot(do[:,t,:].T, h[:,t+1,:]), -5, 5)
-            dc += np.clip(np.sum(do[:,t,:], axis=0, keepdims=True), -5, 5)
-
-        # calculate the output (o) - unnormalized log probabilities of classes
-        # calculate yhat - softmax of the output
-        # calculate the cross-entropy loss
-        # calculate the derivative of the cross-entropy softmax loss with respect to the output (o)
-        # calculate the gradients with respect to the output parameters V and c
-        # calculate the gradients with respect to the hidden layer h
+            dc += np.clip(np.sum(do[:,t,:], keepdims=True), -5, 5)
 
         return loss, dh, dV, dc
     
@@ -181,12 +122,17 @@ class RNN(object):
         # print self.V.shape, dV.shape, self.memory_V.shape
         # print self.c.shape, dc.shape, self.memory_c.shape
 
-        for w, g, r in zip((self.U, self.W, self.b, self.V, self.c),
-                           (dU, dW, db.T, dV, dc.T),
-                           (self.memory_U, self.memory_W, self.memory_b, self.memory_V, self.memory_c)):
-            
-            r += g * g
-            w += -(self.learning_rate / (self.theta + np.sqrt(r)) * g)
+        self.memory_U += np.square(dU)
+        self.memory_b += np.square(db.T)
+        self.memory_W += np.square(dW)
+        self.memory_V += np.square(dV)
+        self.memory_c += np.square(dc.T)
+
+        self.U -= self.learning_rate * dU / (np.sqrt(self.memory_U + self.theta))
+        self.b -= self.learning_rate * db.T / (np.sqrt(self.memory_b + self.theta))
+        self.W -= self.learning_rate * dW / (np.sqrt(self.memory_W + self.theta))
+        self.V -= self.learning_rate * dV / (np.sqrt(self.memory_V + self.theta))
+        self.c -= self.learning_rate * dc.T / (np.sqrt(self.memory_c + self.theta))
 
     def step(self, h0, x, y):
         h, cache = RNN.rnn_forward(x, h0, self.U, self.W, self.b)
@@ -197,8 +143,29 @@ class RNN(object):
 
         return loss, h[:,-1,:]
 
-    
-def run_language_model(dataset, max_epochs, hidden_size=100, sequence_length=30, learning_rate=1e-1, sample_every=100):
+    def sample(self, seed='HAN:\nIs that good or bad?\n\n', n_sample=300):
+        h0 = np.zeros((self.hidden_size, self.hidden_size))
+        x = db.encode(seed)
+
+        h, _ = RNN.rnn_forward(np.array([x]), h0, self.U, self.W, self.b)
+        o = RNN.output(h, self.V, self.c)
+        s = RNN.softmax(o)[0]
+        s = np.argmax(s, axis=1)
+        c = db.decode(s)[-1]
+        sentence = [c]
+        for i in range(n_sample - len(seed)):
+            x = db.encode(c)
+            h, _ = RNN.rnn_forward(np.array([x]), h[:,-1,:], self.U, self.W, self.b)
+            o = RNN.output(h, self.V, self.c)
+            s = RNN.softmax(o)[0]
+            s = np.argmax(s, axis=1)
+            c = db.decode(s)[0]
+            sentence.append(c)
+
+        return ''.join(sentence)
+
+
+def run_language_model(dataset, max_epochs, hidden_size=100, sequence_length=30, learning_rate=1e-3, sample_every=50):
     
     vocab_size = dataset.vocab_size
     rnn = RNN(hidden_size, sequence_length, vocab_size, learning_rate)
@@ -206,23 +173,31 @@ def run_language_model(dataset, max_epochs, hidden_size=100, sequence_length=30,
     current_epoch = 0 
     batch = 0
 
-    h0 = np.zeros((hidden_size, hidden_size))
+    h0 = np.zeros((batch_size, hidden_size))
 
-    average_loss = 0
-
+    print rnn.sample()
     while current_epoch < max_epochs: 
         print 'current_epoch: {}'.format(current_epoch)
 
+        b = 0
         for x, y in dataset.batches():
-            rnn.gradient_check(x, y)
             loss, h0 = rnn.step(h0, x, y)
+            b += 1
+            if b % sample_every == 0:
+                print rnn.sample()
+                
 
         current_epoch += 1
+        h0 = np.zeros((batch_size, hidden_size))
+    
+   
+
+db = Database(batch_size, 30)
+
+
 
 if __name__ == '__main__':
     file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'selected_conversations.txt')
-
-    db = Database(100, 30)
     db.preprocess(file_path)
 
     run_language_model(db, 30)
