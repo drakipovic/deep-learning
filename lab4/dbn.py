@@ -111,7 +111,7 @@ with g1.as_default():
     initialize1 = tf.initialize_all_variables()
 
 batch_size = 100
-epochs = 100
+epochs = 1
 n_samples = mnist.train.num_examples
 
 total_batch = int(n_samples / batch_size) * epochs
@@ -153,6 +153,7 @@ with g2.as_default():
     h2_prob = tf.sigmoid(tf.matmul(v2_prob, w2) + hb2)
     h2 = sample_prob(h2_prob)
     h3 = h2
+    h3_prob = h2_prob
     
     for step in range(gibbs_sampling_steps):
         v3_prob = tf.sigmoid(tf.matmul(h3_prob, w2, transpose_b=True) + vb2)

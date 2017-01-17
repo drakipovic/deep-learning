@@ -112,7 +112,7 @@ with g1.as_default():
     initialize1 = tf.initialize_all_variables()
 
 batch_size = 100
-epochs = 20
+epochs = 10
 n_samples = mnist.train.num_examples
 
 total_batch = int(n_samples / batch_size) * epochs

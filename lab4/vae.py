@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 n_samples = mnist.train.num_examples
 
-learning_rate = 0.01
+learning_rate = 0.001
 batch_size = 100
 
 
@@ -110,19 +110,20 @@ layer_d1 = vae_layer(z, n_z, n_hidden_gener_1, 'layer_d1')
 layer_d2 = vae_layer(layer_d1, n_hidden_gener_1, n_hidden_gener_2, 'layer_d2')
             
 # definirajte srednju vrijednost rekonstrukcije
-x_reconstr_mean = vae_layer(layer_d2, n_hidden_gener_2, n_input, 'x')
+x_reconstr_mean = vae_layer(layer_d2, n_hidden_gener_2, n_input, 'x', act=tf.identity)
 
 x_reconstr_mean_out = tf.nn.sigmoid(x_reconstr_mean)
 
 # definirajte dvije komponente funkcije cijene
 with tf.name_scope('costs'):                         
     # komponenta funkcije cijene - unakrsna entropija
-    cost1 = tf.reduce_sum(-x * x_reconstr_mean + tf.log(1 + tf.exp(x_reconstr_mean)), axis=1)
+    #cost1 = tf.nn.softmax_cross_entropy_with_logits(x_reconstr_mean, x)
     #cost1 = -tf.reduce_sum(x*tf.log(1e-6+x_reconstr_mean)+(1-x)+tf.log(1e-6+1-x_reconstr_mean), axis=1)
+    cost1 = tf.reduce_sum(-x_reconstr_mean * x + tf.log(1 + tf.exp(x_reconstr_mean)), axis=1)
     # komponenta funkcije cijene - KL divergencija
     cost2 = -0.5 * tf.reduce_sum(1 + z_log_sigma_sq - tf.square(z_mean) - tf.exp(z_log_sigma_sq), axis=1) 
     #tf.scalar_summary('cost2', cost2)
-    cost = tf.reduce_mean(cost1 + cost2)   # average over batch
+    cost = tf.reduce_mean(cost1) + tf.reduce_mean(cost2)  # average over batch
     tf.scalar_summary('cost', cost)
                          
 # ADAM optimizer
@@ -138,7 +139,7 @@ sess.run(init)
 
 saver = tf.train.Saver()
 
-n_epochs = 30
+n_epochs = 5
 
 for epoch in range(n_epochs):
     avg_cost = 0.
@@ -193,5 +194,5 @@ plt.colorbar()
 # plt.figure(figsize=(8, 10))        
 # Xi, Yi = np.meshgrid(x_values, y_values)
 # plt.imshow(canvas, origin="upper")
-#plt.tight_layout()
+# plt.tight_layout()
 plt.show()
